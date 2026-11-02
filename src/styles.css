@@ -301,3 +301,7 @@ h1,h2,h3,p{margin:0}
 @media (max-width:767px){
   .app{max-width:none;height:100dvh;}
 }
+.gmark.gw{color:#fff}
+.crash{max-width:520px;margin:48px auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+.sidebar .side-set{flex:none;margin-top:auto}
+.avatar .lk{color:#3B63E5}

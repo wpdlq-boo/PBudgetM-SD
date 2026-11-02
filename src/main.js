@@ -1,7 +1,8 @@
 import './styles.css';
-import { supabase, hasSupabase } from './supabaseClient.js';
+import { supabase, hasSupabase, supabaseConfigError } from './supabaseClient.js';
 
-const PIN = '1234';
+const PIN_KEY = 'wais_pin_v1';
+const RESET_KEY = 'wais_pin_reset';
 const GUEST_KEY = 'wais_guest_v1';
 const MODE_KEY = 'wais_mode';
 const EXTRA = ['#B4549B', '#C2410C', '#4D7C0F', '#9D174D'];
@@ -38,6 +39,7 @@ const ICONS = {
   arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>',
   chev: '<path d="M6 9l6 6 6-6"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
   flame: '<path d="M12 2.5c.6 3.6 4.2 5.4 4.2 9.7a4.2 4.2 0 0 1-8.4 0c0-2 .9-3.2 2-4.2.1 1.5.7 2.2 1.5 2.2C11.3 8.4 11.2 5.2 12 2.5z"/>'
 };
 
@@ -87,6 +89,29 @@ function logo(size) {
   return '<svg class="wlogo" width="' + size + '" height="' + size + '" viewBox="0 0 100 100" role="img" aria-label="WAIS logo"><rect class="lg-bg lg-s" x="2" y="2" width="96" height="96" rx="26" stroke-width="3.2"/><g class="lg-s" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M29.4 49.7V70M50.1 38V70M70.9 31.3V70" stroke-width="4.4"/><path d="M27.8 41.1L44.2 31L57.5 38.3L72.3 26.5" stroke-width="3.7"/></g><g class="lg-f"><circle cx="27.8" cy="41.1" r="5.8"/><circle cx="44.2" cy="31" r="5.8"/><circle cx="57.5" cy="38.3" r="5.8"/><circle cx="72.3" cy="26.5" r="5.8"/></g><g class="lg-b"><circle cx="27.8" cy="41.1" r="1.6"/><circle cx="44.2" cy="31" r="1.6"/><circle cx="57.5" cy="38.3" r="1.6"/><circle cx="72.3" cy="26.5" r="1.6"/></g></svg>';
 }
 
+// ---- device PIN (stored as a salted SHA-256 hash, never as plain digits) ----
+function getPinRec() {
+  try { const r = JSON.parse(localStorage.getItem(PIN_KEY) || 'null'); return r && r.hash && r.salt ? r : null; } catch (e) { return null; }
+}
+async function hashPin(pin, salt) {
+  const text = salt + ':' + pin;
+  if (window.crypto && crypto.subtle) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  let h = 2166136261; // fallback for non-HTTPS local testing
+  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return 'f' + (h >>> 0).toString(16);
+}
+async function savePin(pin) {
+  const salt = uid();
+  localStorage.setItem(PIN_KEY, JSON.stringify({ salt, hash: await hashPin(pin, salt) }));
+}
+async function checkPin(pin) {
+  const r = getPinRec();
+  return Boolean(r) && (await hashPin(pin, r.salt)) === r.hash;
+}
+
 let MODE = localStorage.getItem(MODE_KEY) || '';
 let BUDGET = DEF_BUDGET;
 let ALLOW = DEF_ALLOW;
@@ -115,7 +140,8 @@ function fresh() {
     newCatName: '', newEmoji: EMOJIS[0], err: '', notice: '', lockMsg: '', period: 'month',
     heatIdx: HLAST, day: null, daySeg: 'tx', manage: false, delId: null, histN: 20,
     draftLimits: null, draftBudget: '', addName: '', addLimit: '', addEmoji: EMOJIS[0],
-    addErr: '', modalId: null, moveTo: '', limErr: '', savedStreak: 1, streakMsg: '', lastSaved: null
+    addErr: '', modalId: null, moveTo: '', limErr: '', savedStreak: 1, streakMsg: '', lastSaved: null,
+    pinFlow: 'create', pinStage: 'new', pinFirst: '', fails: 0, waitUntil: 0, confirmErase: false
   };
 }
 function seedState() {
@@ -378,33 +404,81 @@ function donut(rows, total) {
   return '<div class="donut"><svg viewBox="0 0 160 160" width="168" height="168" role="img" aria-label="Donut chart of spending by category">' + segs + '<text class="t1" x="80" y="76" text-anchor="middle">Total</text><text class="t2" x="80" y="96" text-anchor="middle">' + peso(total) + '</text></svg></div>';
 }
 
+function pinPad(st, msgs) {
+  const dots = [0, 1, 2, 3].map(i => '<i class="pdot' + (i < st.pin.length ? ' on' : '') + '"></i>').join('');
+  let keys = '';
+  for (let n = 1; n <= 9; n++) keys += '<button class="key" data-act="key" data-k="' + n + '" data-key="k' + n + '" aria-label="' + n + '">' + n + '</button>';
+  keys += '<button class="key small" data-act="clear" data-key="kclear">Clear</button><button class="key" data-act="key" data-k="0" data-key="k0" aria-label="0">0</button><button class="key small" data-act="del" data-key="kdel" aria-label="Delete last digit">Delete</button>';
+  return '<div class="pdots" role="img" aria-label="' + st.pin.length + ' of 4 digits entered">' + dots + '</div>' + (msgs || '') + '<div class="keypad">' + keys + '</div>';
+}
+function startPinCreate() {
+  S.pinFlow = 'create'; S.pinStage = 'new'; S.pin = ''; S.pinFirst = ''; S.err = ''; S.screen = 'pin';
+}
+
 const SCREENS = {
   lock(st) {
-    const dots = [0, 1, 2, 3].map(i => '<i class="pdot' + (i < st.pin.length ? ' on' : '') + '"></i>').join('');
-    let keys = '';
-    for (let n = 1; n <= 9; n++) keys += '<button class="key" data-act="key" data-k="' + n + '" data-key="k' + n + '" aria-label="' + n + '">' + n + '</button>';
-    keys += '<button class="key small" data-act="clear" data-key="kclear">Clear</button><button class="key" data-act="key" data-k="0" data-key="k0" aria-label="0">0</button><button class="key small" data-act="del" data-key="kdel" aria-label="Delete last digit">Delete</button>';
-    const setup = hasSupabase ? '' : '<p class="setup">Google sign-in needs a Supabase project. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel, then run supabase/schema.sql. Guest mode works now.</p>';
-    return '<div class="scr"><div class="body lockb">' +
-      logo(64) +
+    const hasPin = Boolean(getPinRec());
+    const canUnlock = hasPin && (MODE === 'guest' || (MODE === 'google' && sessionUser));
+    let setup = '';
+    if (supabaseConfigError) setup = '<p class="setup" role="alert">' + esc(supabaseConfigError) + '</p>';
+    else if (!hasSupabase) setup = '<p class="setup">Google sign-in isn’t set up on this site yet. You can still use the app without an account.</p>';
+    const msgs = (st.lockMsg ? '<p class="ok" role="status">' + esc(st.lockMsg) + '</p>' : '') + errBox(st);
+    let card;
+    if (canUnlock) {
+      const who = MODE === 'google'
+        ? 'Google budget' + (sessionUser.email ? ' · ' + esc(sessionUser.email) : '')
+        : 'On-device budget (no account)';
+      const other = MODE === 'google'
+        ? '<button class="btn btn-secondary" data-act="guest" data-key="guest">Use Without An Account Instead</button>'
+        : (hasSupabase ? '<button class="btn btn-secondary" data-act="google" data-key="google"><span class="gmark" aria-hidden="true">G</span>Continue With Google Instead</button>' : '');
+      card = '<section class="card unlock" aria-label="Unlock"><div class="u-h"><div><p class="eyebrow">Welcome back</p><h2>Unlock your budget</h2></div><span class="secure">Secure</span></div>' +
+        '<p class="sub">' + who + '</p>' + pinPad(st, msgs) +
+        pbtn('Unlock &amp; Continue', 'unlock', null, st.pin.length < 4, ic('arrow', 22)) +
+        '<button class="link c" data-act="go" data-to="forgot" data-key="forgot">Forgot PIN?</button>' +
+        (other ? '<div class="or"><span>OR</span></div>' + other : '') +
+        (sessionUser ? '<button class="link signout" data-act="signout" data-key="signout">Sign Out Of Google</button>' : '') + '</section>';
+    } else {
+      card = '<section class="card unlock" aria-label="Get started"><div class="u-h"><div><p class="eyebrow">Get started</p><h2>Where should your budget live?</h2></div></div>' + msgs +
+        (hasSupabase ? '<button class="btn btn-primary" data-act="google" data-key="google"><span class="gmark gw" aria-hidden="true">G</span>Continue With Google</button><p class="sub small">Saved to your account, so it’s there on any device.</p><div class="or"><span>OR</span></div>' : '') +
+        '<button class="btn btn-secondary" data-act="guest" data-key="guest">Use Without An Account</button><p class="sub small">Saved only on this device. Nothing is uploaded.</p>' +
+        '<p class="sub small">Next, you’ll create a 4-digit PIN that unlocks the app on this device.</p></section>';
+    }
+    return '<div class="scr"><div class="body lockb">' + logo(64) +
       '<p class="eyebrow">Smart money starts here</p><h1 class="brand" tabindex="-1" data-h>WAIS</h1>' +
-      '<p class="tag">A Wise Assistant for Insightful Spending</p><p class="sub">Plan your budget, spot your spending patterns, and spend with insight.</p>' + setup +
-      '<section class="card unlock" aria-label="Unlock"><div class="u-h"><div><p class="eyebrow">Welcome back</p><h2>Unlock your budget</h2></div><span class="secure">Secure</span></div>' +
-      '<div class="pdots" role="img" aria-label="' + st.pin.length + ' of 4 digits entered">' + dots + '</div>' + (st.lockMsg ? '<p class="ok" role="status">' + esc(st.lockMsg) + '</p>' : '') + errBox(st) +
-      '<div class="keypad">' + keys + '</div>' +
-      pbtn('Unlock &amp; Continue', 'unlock', null, st.pin.length < 4, ic('arrow', 22)) +
-      '<button class="link c" data-act="go" data-to="forgot" data-key="forgot">Forgot PIN?</button>' +
-      '<div class="or"><span>OR</span></div>' +
-      '<button class="btn btn-secondary" data-act="google" data-key="google"><span class="gmark" aria-hidden="true">G</span>Continue With Google</button>' +
-      '<button class="btn btn-secondary" data-act="guest" data-key="guest">Use Without An Account</button>' +
-      (sessionUser ? '<button class="link signout" data-act="signout" data-key="signout">Sign out of Google' + (sessionUser.email ? ' (' + esc(sessionUser.email) + ')' : '') + '</button>' : '') +
-      '<p class="sub small center">Default PIN: 1234' + (MODE === 'google' && sessionUser ? ' · Unlocks your Google budget' : MODE === 'guest' ? ' · Unlocks your on-device budget' : '') + '</p></section></div></div>';
+      '<p class="tag">A Wise Assistant for Insightful Spending</p><p class="sub">Plan your budget, spot your spending patterns, and spend with insight.</p>' + setup + card + '</div></div>';
+  },
+  pin(st) {
+    const change = st.pinFlow === 'change';
+    const T = { current: 'Enter your current PIN', new: change ? 'Choose a new PIN' : 'Create your PIN', confirm: 'Confirm your new PIN' };
+    const D = { current: 'To change your PIN, first confirm the one you use now.', new: 'Pick 4 digits you’ll remember. It’s saved only on this device and unlocks the app.', confirm: 'Type the same 4 digits again.' };
+    const n = { current: 1, new: change ? 2 : 1, confirm: change ? 3 : 2 }[st.pinStage], of = change ? 3 : 2;
+    return '<div class="scr">' + bar(change ? 'Change PIN' : 'Set up PIN', change ? 'settings' : 'lock', change ? 'Settings' : 'Back') + '<div class="body lockb">' +
+      '<section class="card unlock" aria-label="' + T[st.pinStage] + '"><p class="eyebrow">Step ' + n + ' of ' + of + '</p><h2>' + T[st.pinStage] + '</h2><p class="sub">' + D[st.pinStage] + '</p>' +
+      pinPad(st, errBox(st)) + pbtn(st.pinStage === 'confirm' ? 'Save PIN' : 'Next', 'pin-next', null, st.pin.length < 4, ic('arrow', 22)) + '</section></div></div>';
   },
   forgot(st) {
+    let guestPart;
+    if (st.confirmErase) {
+      guestPart = '<p class="err" role="alert">This permanently deletes the expenses saved on this device without an account. Google budgets are not affected.</p><div class="two"><button class="btn btn-secondary" data-act="erase-cancel" data-key="erase-cancel">Cancel</button><button class="btn btn-danger" data-act="reset-guest" data-key="erase-go">Erase &amp; Reset</button></div>';
+    } else {
+      guestPart = sbtn('Erase On-Device Budget &amp; Reset PIN', 'erase-ask', null, 'erase-ask');
+    }
     return '<div class="scr">' + bar('Forgot PIN?', 'lock', 'Back') + '<div class="body">' +
-      '<section class="card"><h2>Reset with a 6-digit code</h2><p class="sub">If you signed in with Google, sign in again with Google to get back into your budget. Your PIN is a local lock on this device.</p><p class="sub">Using the app without an account? Your PIN is still the default, 1234, until you change it.</p></section>' +
-      (st.sent ? '<p class="ok" role="status">Use Continue With Google on the lock screen to reopen a signed-in budget. Guest PIN is 1234.</p>' : '') +
+      '<p class="sub">Your PIN is saved only on this device, so it can’t be emailed to you. Choose how to reset it.</p>' +
+      (hasSupabase ? '<section class="card"><h2>Signed in with Google?</h2><p class="sub">Sign in with Google again to prove it’s you, then choose a new PIN. Your synced budget stays safe.</p><button class="btn btn-primary" data-act="reset-google" data-key="reset-google"><span class="gmark gw" aria-hidden="true">G</span>Reset PIN With Google</button></section>' : '') +
+      '<section class="card"><h2>Using without an account?</h2><p class="sub">There’s no account to confirm it’s you, so the only way to reset is to erase the budget saved on this device.</p>' + guestPart + '</section>' +
       '<div class="spacer"></div>' + pbtn('Back To Unlock', 'go', 'lock') + '</div></div>';
+  },
+  settings(st) {
+    const g = MODE === 'google' && sessionUser;
+    return '<div class="scr">' + bar('Settings', 'home', 'Home') + '<div class="body">' +
+      (st.notice ? '<p class="ok" role="status">' + esc(st.notice) + '</p>' : '') +
+      '<section class="card"><p class="eyebrow">Account</p><h2>' + esc(st.user || 'Guest') + '</h2><p class="sub">' +
+        (g ? 'Signed in with Google' + (sessionUser.email ? ' as ' + esc(sessionUser.email) : '') + '. Your budget is saved to your account.' : 'Using without an account. Your budget is saved only on this device.') + '</p>' +
+        (g ? sbtn('Sign Out Of Google', 'signout', null, 'signout') : (hasSupabase ? '<button class="btn btn-secondary" data-act="google" data-key="google"><span class="gmark" aria-hidden="true">G</span>Switch To Google</button>' : '')) + '</section>' +
+      '<section class="card"><p class="eyebrow">Security</p><h2>App PIN</h2><p class="sub">Your 4-digit PIN is saved only on this device. The app also locks itself after 1 minute without use.</p>' +
+        '<button class="btn btn-primary" data-act="pin-change" data-key="pin-change">Change PIN</button>' + sbtn('Lock App Now', 'lock', null, 'lock-now') + '</section>' +
+      '</div></div>';
   },
   home(st) {
     const m = totals('month'), spent = m.total, rem = BUDGET - spent;
@@ -427,7 +501,7 @@ const SCREENS = {
     }
     const hy = START_YEAR + Math.floor(st.heatIdx / 12);
     return '<div class="scr"><div class="body">' +
-      '<header class="hhead"><div><p class="eyebrow">' + DOWF[TODAY.getDay()] + ', ' + MON[TODAY.getMonth()] + ' ' + TODAY.getDate() + '</p><h1 class="hello" tabindex="-1" data-h>' + greet() + name + '!</h1></div><button class="avatar" data-act="lock" data-key="avatar" aria-label="Lock app now">' + (st.user ? esc(st.user.charAt(0)) : 'G') + '<span class="lk" aria-hidden="true">' + ic('lock', 12) + '</span></button></header>' +
+      '<header class="hhead"><div><p class="eyebrow">' + DOWF[TODAY.getDay()] + ', ' + MON[TODAY.getMonth()] + ' ' + TODAY.getDate() + '</p><h1 class="hello" tabindex="-1" data-h>' + greet() + name + '!</h1></div><button class="avatar" data-act="go" data-to="settings" data-key="avatar" aria-label="Settings and PIN">' + (st.user ? esc(st.user.charAt(0).toUpperCase()) : 'G') + '<span class="lk" aria-hidden="true">' + ic('gear', 14) + '</span></button></header>' +
       '<section class="streakbar" aria-label="Logging streak"><span class="flame">' + ic('flame', 28, 'fill') + '</span><div class="grow"><p class="s-t">' + st.streak + '-day streak</p><p class="s-s">' + (st.loggedToday ? 'Logged today. Freeze shield is active.' : st.streak ? 'Log today to keep it. Freeze shield is active.' : 'Log an expense today to start a streak.') + '</p></div><span class="badge">' + (st.loggedToday ? 'Logged' : 'Protected') + '</span></section>' +
       '<div class="home-top"><section class="hero" aria-label="Remaining savings"><div class="hero-top"><p class="eyebrow">Remaining savings</p><span class="pill">' + (rem >= 0 ? 'Safe to spend' : 'Over budget') + '</span></div><p class="hero-amt">' + peso2(rem) + '</p><p class="hero-of">of ' + peso2(BUDGET) + ' budget</p><div class="hero-track" role="img" aria-label="' + Math.round(spent / BUDGET * 100) + '% of budget used"><i style="width:' + Math.min(100, spent / BUDGET * 100) + '%"></i></div><div class="hero-foot"><span>Spent: ' + peso2(spent) + '</span><span>' + peso2(perDay) + ' / day</span></div></section>' +
       '<button class="guard" data-act="go" data-to="summary" data-key="guard"><span class="g-ic em" aria-hidden="true">💵</span><span class="grow"><b>Budget Guard • ' + esc(g.title) + '</b><span class="gt">' + esc(g.text) + '</span></span>' + ic('fwd', 22) + '</button></div>' +
@@ -567,7 +641,8 @@ function sidebarHtml(active) {
   const t = [['home', 'Home', 'home'], ['summary', 'Summary', 'pie'], ['history', 'History', 'list']];
   return '<aside class="sidebar"><div class="brand-row">' + logo(40) + '<strong>WAIS</strong></div><nav class="nav" aria-label="Main">' +
     t.map(x => '<button class="tab" data-act="go" data-to="' + x[0] + '" data-key="stab-' + x[0] + '" ' + (active === x[0] ? 'aria-current="page"' : '') + '>' + ic(x[2]) + '<span>' + x[1] + '</span></button>').join('') +
-    '</nav><button class="fab" data-act="newtx" data-key="sfab">' + ic('plus', 22) + '<span> Log Expense</span></button></aside>';
+    '</nav><button class="fab" data-act="newtx" data-key="sfab">' + ic('plus', 22) + '<span> Log Expense</span></button>' +
+    '<button class="tab side-set" data-act="go" data-to="settings" data-key="stab-settings" ' + (active === 'settings' ? 'aria-current="page"' : '') + '>' + ic('gear') + '<span>Settings</span></button></aside>';
 }
 
 function fixHeat(root) {
@@ -578,9 +653,16 @@ function fixHeat(root) {
     sc.style.scrollBehavior = '';
   });
 }
+function isLocked() { return S.screen === 'lock' || S.screen === 'forgot' || (S.screen === 'pin' && S.pinFlow !== 'change'); }
 function render() {
-  const locked = S.screen === 'lock' || S.screen === 'forgot';
-  const tabScreen = ['home', 'summary', 'history'].includes(S.screen) ? S.screen : '';
+  try { renderInner(); } catch (e) {
+    console.error(e);
+    rootEl.innerHTML = '<div class="crash"><p class="setup" role="alert">Something went wrong: ' + esc(e.message) + '</p><button class="btn btn-primary" onclick="location.reload()">Reload</button></div>';
+  }
+}
+function renderInner() {
+  const locked = isLocked();
+  const tabScreen = ['home', 'summary', 'history', 'settings'].includes(S.screen) ? S.screen : '';
   const act = document.activeElement, k = act && act.dataset ? act.dataset.key : null;
   const body = appEl && appEl.querySelector('.body'), st = body ? body.scrollTop : 0, same = (S.screen === lastScreen);
   rootEl.className = 'shell' + (locked ? ' lock-mode' : '');
@@ -615,7 +697,7 @@ function heatTo(idx) {
 }
 function resetDraft() { S.amount = ''; S.note = ''; S.cat = null; S.date = TKEY; S.editId = null; S.err = ''; S.addingCat = false; }
 function doLock(msg) {
-  resetDraft(); S.manage = false; S.delId = null; S.modalId = null; S.notice = ''; S.pin = ''; S.err = ''; S.sent = false; S.lockMsg = msg; S.screen = 'lock';
+  resetDraft(); S.manage = false; S.delId = null; S.modalId = null; S.notice = ''; S.pin = ''; S.err = ''; S.confirmErase = false; S.lockMsg = msg; S.screen = 'lock';
   lastActive = Date.now(); render();
 }
 
@@ -634,6 +716,7 @@ async function enterGoogleSession(goHome) {
   localStorage.setItem(MODE_KEY, 'google');
   busy = true; render();
   try {
+    if (!sessionUser) throw new Error('no session');
     await loadRemote();
     S.pin = ''; S.err = ''; S.lockMsg = '';
     if (goHome) S.screen = 'home';
@@ -658,27 +741,63 @@ async function handleAct(a, b) {
     case 'key': if (S.pin.length < 4) S.pin += b.dataset.k; S.err = ''; break;
     case 'clear': S.pin = ''; S.err = ''; break;
     case 'del': S.pin = S.pin.slice(0, -1); S.err = ''; break;
-    case 'unlock':
+    case 'unlock': {
       if (S.pin.length < 4) break;
-      if (S.pin === PIN) {
-        S.pin = ''; S.err = ''; S.lockMsg = '';
+      if (Date.now() < S.waitUntil) { S.err = 'Too many wrong tries. Wait ' + Math.ceil((S.waitUntil - Date.now()) / 1000) + ' seconds.'; S.pin = ''; break; }
+      if (await checkPin(S.pin)) {
+        S.pin = ''; S.err = ''; S.lockMsg = ''; S.fails = 0;
         if (MODE === 'google' && sessionUser) await enterGoogleSession(true);
-        else if (MODE === 'google') { S.err = 'Your Google session expired. Tap Continue With Google.'; MODE = ''; localStorage.removeItem(MODE_KEY); break; }
+        else if (MODE === 'google') { S.err = 'Your Google session expired. Sign in with Google again.'; MODE = ''; localStorage.removeItem(MODE_KEY); break; }
         else await enterGuest();
         return;
       }
-      S.err = 'Incorrect PIN. Try again.'; S.pin = '';
+      S.fails++; S.pin = '';
+      if (S.fails >= 5) { S.fails = 0; S.waitUntil = Date.now() + 30000; S.err = 'Too many wrong tries. Wait 30 seconds.'; }
+      else S.err = 'Incorrect PIN. Try again.';
       break;
+    }
+    case 'pin-next': {
+      if (S.pin.length < 4) break;
+      if (S.pinStage === 'current') {
+        if (await checkPin(S.pin)) { S.pinStage = 'new'; S.err = ''; }
+        else S.err = 'That isn’t your current PIN.';
+        S.pin = ''; break;
+      }
+      if (S.pinStage === 'new') { S.pinFirst = S.pin; S.pin = ''; S.err = ''; S.pinStage = 'confirm'; break; }
+      if (S.pin !== S.pinFirst) { S.pin = ''; S.pinFirst = ''; S.pinStage = 'new'; S.err = 'The PINs didn’t match. Start again.'; break; }
+      await savePin(S.pin);
+      S.pin = ''; S.pinFirst = ''; S.err = '';
+      if (S.pinFlow === 'change') { S.notice = 'PIN changed.'; S.screen = 'settings'; break; }
+      if (MODE === 'google') await enterGoogleSession(true); else await enterGuest();
+      return;
+    }
+    case 'pin-change': S.pinFlow = 'change'; S.pinStage = 'current'; S.pin = ''; S.pinFirst = ''; S.err = ''; S.notice = ''; S.screen = 'pin'; break;
     case 'google':
-      if (!hasSupabase) { S.err = 'Add Supabase keys in Vercel to use Google.'; break; }
+      if (!hasSupabase) { S.err = supabaseConfigError || 'Google sign-in isn’t set up on this site yet.'; break; }
       await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } });
       return;
-    case 'guest': await enterGuest(); return;
+    case 'reset-google':
+      if (!hasSupabase) break;
+      localStorage.setItem(RESET_KEY, '1');
+      await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } });
+      return;
+    case 'erase-ask': S.confirmErase = true; focusKey = 'erase-cancel'; break;
+    case 'erase-cancel': S.confirmErase = false; focusKey = 'erase-ask'; break;
+    case 'reset-guest':
+      localStorage.removeItem(GUEST_KEY); localStorage.removeItem(PIN_KEY);
+      if (MODE !== 'google') { MODE = ''; localStorage.removeItem(MODE_KEY); }
+      S.confirmErase = false; S.pin = ''; S.err = ''; S.lockMsg = 'On-device budget erased and PIN reset.'; S.screen = 'lock';
+      break;
+    case 'guest':
+      MODE = 'guest'; localStorage.setItem(MODE_KEY, 'guest'); S.err = '';
+      if (!getPinRec()) { startPinCreate(); break; }
+      S.pin = ''; S.lockMsg = 'Enter your PIN to open the budget saved on this device.'; S.screen = 'lock';
+      break;
     case 'signout':
       if (supabase) await supabase.auth.signOut();
       sessionUser = null; MODE = ''; localStorage.removeItem(MODE_KEY);
       CATS = []; TX = []; rebuildBY();
-      S.lockMsg = 'Signed out of Google.'; S.pin = ''; S.err = ''; S.screen = 'lock';
+      resetDraft(); S.lockMsg = 'Signed out of Google.'; S.pin = ''; S.err = ''; S.notice = ''; S.screen = 'lock';
       break;
     case 'lock': doLock('App locked.'); return;
     case 'next-amount':
@@ -849,8 +968,10 @@ function bindRoot() {
   });
   rootEl.addEventListener('keydown', e => {
     if (e.key === 'Escape' && S.modalId) { const xm = S.modalId; S.modalId = null; focusKey = 'dl-' + xm; render(); return; }
-    if (S.screen === 'lock' && /^[0-9]$/.test(e.key) && !e.target.dataset.in) {
-      e.preventDefault(); if (S.pin.length < 4) { S.pin += e.key; S.err = ''; focusKey = 'k' + e.key; render(); } return;
+    if ((S.screen === 'lock' || S.screen === 'pin') && appEl.querySelector('.keypad') && !e.target.dataset.in) {
+      if (/^[0-9]$/.test(e.key)) { e.preventDefault(); if (S.pin.length < 4) { S.pin += e.key; S.err = ''; focusKey = 'k' + e.key; render(); } return; }
+      if (e.key === 'Backspace') { e.preventDefault(); S.pin = S.pin.slice(0, -1); render(); return; }
+      if (e.key === 'Enter' && S.pin.length === 4 && e.target.tagName !== 'BUTTON') { e.preventDefault(); handleAct(S.screen === 'pin' ? 'pin-next' : 'unlock', e.target); return; }
     }
     if (e.key !== 'Enter') return;
     const w = e.target.dataset ? e.target.dataset.in : null;
@@ -865,29 +986,38 @@ async function boot() {
   S = fresh();
   rootEl = document.getElementById('root');
   bindRoot();
-  const fromOAuth = window.location.hash.includes('access_token') || window.location.search.includes('code');
   if (hasSupabase) {
-    const session = await currentSession();
-    if (session) {
-      sessionUser = session.user;
+    const href = window.location.hash + window.location.search;
+    const fromOAuth = /access_token|[?&]code=|error_description/.test(href);
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      sessionUser = data && data.session ? data.session.user : null;
+      supabase.auth.onAuthStateChange((event, session) => {
+        sessionUser = session ? session.user : null;
+        if (event === 'SIGNED_OUT' && MODE === 'google' && !isLocked()) setTimeout(() => doLock('Your Google session ended. Sign in again.'), 0);
+      });
       if (fromOAuth) {
+        const params = new URLSearchParams(window.location.hash.slice(1) + '&' + window.location.search.slice(1));
         history.replaceState({}, '', window.location.pathname);
-        await enterGoogleSession(true);
-        return;
+        if (sessionUser) {
+          MODE = 'google'; localStorage.setItem(MODE_KEY, 'google');
+          if (localStorage.getItem(RESET_KEY) || !getPinRec()) { localStorage.removeItem(RESET_KEY); startPinCreate(); }
+          else S.lockMsg = 'Signed in' + (sessionUser.email ? ' as ' + sessionUser.email : '') + '. Enter your PIN to continue.';
+        } else {
+          localStorage.removeItem(RESET_KEY);
+          S.err = 'Google sign-in didn’t finish: ' + (params.get('error_description') || (error && error.message) || 'please try again') + '.';
+        }
       }
+    } catch (e) {
+      S.err = 'Couldn’t reach Supabase (' + e.message + '). You can still use the app without an account.';
     }
-    supabase.auth.onAuthStateChange((event, session) => {
-      sessionUser = session ? session.user : null;
-      if (event === 'SIGNED_OUT' && MODE === 'google' && S.screen !== 'lock') setTimeout(() => doLock('Your Google session ended. Sign in again.'), 0);
-    });
   }
   render();
 }
 
 setInterval(() => {
   if (!S) return;
-  const locked = S.screen === 'lock' || S.screen === 'forgot';
-  if (locked) { lastActive = Date.now(); return; }
+  if (isLocked()) { lastActive = Date.now(); return; }
   if (Date.now() - lastActive >= IDLE_MS) doLock('Locked after 1 minute of inactivity.');
 }, 500);
 
