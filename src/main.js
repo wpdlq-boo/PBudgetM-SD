@@ -192,8 +192,11 @@ function totals(p) {
   const rows = Object.keys(m).map(id => ({ id, amt: m[id], pct: m[id] / total })).sort((x, y) => y.amt - x.amt);
   return { total, rows, a, b };
 }
-function cmp(a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : String(b.id).localeCompare(String(a.id))); }
-function monthTx() { const r = range('month'); return TX.filter(t => t.date >= r[0] && t.date <= r[1]).sort(cmp); }
+// Newest date first; within the same date, the most recently logged first (TX keeps logging order).
+function newestFirst(list) {
+  return list.map((t, i) => [t, i]).sort((x, y) => x[0].date < y[0].date ? 1 : x[0].date > y[0].date ? -1 : y[1] - x[1]).map(x => x[0]);
+}
+function monthTx() { const r = range('month'); return newestFirst(TX.filter(t => t.date >= r[0] && t.date <= r[1])); }
 function guardInfo(m) {
   const over = [], near = [];
   m.rows.forEach(r => {
@@ -262,7 +265,7 @@ async function loadRemote() {
   const name = user.user_metadata?.full_name || user.email?.split('@')[0] || 'Friend';
   let [{ data: cats }, { data: txs }, { data: set }] = await Promise.all([
     supabase.from('categories').select('*').eq('user_id', uid).order('sort_order'),
-    supabase.from('transactions').select('*').eq('user_id', uid),
+    supabase.from('transactions').select('*').eq('user_id', uid).order('created_at'),
     supabase.from('settings').select('*').eq('user_id', uid).maybeSingle()
   ]);
   if (!cats || !cats.length) {
@@ -484,7 +487,7 @@ const SCREENS = {
     const m = totals('month'), spent = m.total, rem = BUDGET - spent;
     const lastDay = new Date(TODAY.getFullYear(), TODAY.getMonth() + 1, 0).getDate();
     const daysLeft = lastDay - TODAY.getDate() + 1, perDay = Math.max(0, rem / daysLeft);
-    const g = guardInfo(m), latest = TX.slice().sort(cmp).slice(0, 3);
+    const g = guardInfo(m), latest = newestFirst(TX).slice(0, 3);
     const name = st.user ? ', ' + esc(st.user.split(' ')[0]) : '';
     let months = '';
     for (let i = 0; i <= HLAST; i++) {
