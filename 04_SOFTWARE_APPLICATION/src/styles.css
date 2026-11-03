@@ -140,11 +140,26 @@ h1,h2,h3,p{margin:0}
 .gmark{font-weight:800;font-size:20px;color:#4285F4}
 
 /* home */
-.hhead{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.hhead{position:relative;display:flex;justify-content:space-between;align-items:center;gap:12px}
 .hello{font-size:30px;line-height:36px;font-weight:800;letter-spacing:-.03em;color:var(--ink)}
 .avatar{position:relative;width:56px;height:56px;border-radius:18px;border:0;background:var(--brand);color:var(--btn-ink);display:grid;place-items:center;font:inherit;font-weight:800;font-size:22px;flex:none;cursor:pointer}
 .avatar:active{background:var(--brand-a)}
 .avatar .lk{position:absolute;right:-4px;bottom:-4px;width:24px;height:24px;border-radius:50%;background:#fff;color:#111827;display:grid;place-items:center;border:1.5px solid var(--line2)}
+.menuscrim{position:fixed;inset:0;border:0;background:transparent;z-index:4;cursor:default}
+.pmenu{position:absolute;top:calc(100% + 8px);right:0;z-index:5;width:270px;background:var(--surf);border:1px solid var(--line2);border-radius:20px;box-shadow:0 12px 32px rgba(15,23,42,.18);padding:8px;display:flex;flex-direction:column;gap:4px}
+.pmenu .who{padding:8px 12px 10px;border-bottom:1px solid var(--line2);margin-bottom:4px}
+.pmenu .who b{display:block;color:var(--ink);font-size:16px}
+.mi2{display:flex;align-items:center;gap:12px;min-height:56px;padding:6px 12px;border:0;border-radius:14px;background:transparent;font:inherit;font-weight:700;font-size:16px;color:var(--ink);text-align:left;cursor:pointer;width:100%}
+.mi2:hover{background:var(--sel)}
+.mi2 .mt{display:block;font-weight:700;font-size:15px;line-height:20px;color:var(--ink)}
+.mi2 .ms{display:block;font-weight:500;font-size:13px;line-height:18px;color:var(--mut)}
+.mi2.dim>svg,.mi2.dim .mt{color:var(--mut)}
+.mi2.dim{opacity:.6}
+.mi2.dim:hover{opacity:.85;background:var(--sel)}
+.mi2 .gico{width:22px;text-align:center;font-weight:800;font-size:19px;color:#4285F4;flex:none}
+.note{font-size:14px;line-height:20px;color:var(--mut)}
+.note.center{text-align:center}
+.pincard{padding:20px;gap:12px;border-radius:32px}
 .chk{display:flex;align-items:center;gap:10px;min-height:48px;font-size:15px;color:var(--text)}
 .chk input{width:22px;height:22px}
 .addcard{gap:12px}
