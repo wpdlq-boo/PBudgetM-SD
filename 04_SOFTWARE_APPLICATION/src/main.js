@@ -1112,10 +1112,6 @@ async function boot() {
       S.err = 'Couldn’t reach Supabase (' + e.message + '). You can still use the app without an account.';
     }
   }
-  if (!sessionUser && MODE === 'guest' && !getPinRec() && !S.err) {
-    await enterGuest();
-    return;
-  }
   render();
 }
 
